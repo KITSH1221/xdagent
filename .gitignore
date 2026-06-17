@@ -7,6 +7,12 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
-#env
+.venv/
+venv/
+
+# Environment variables
 .env
+
+# Rust
+target/
+tui/target/
