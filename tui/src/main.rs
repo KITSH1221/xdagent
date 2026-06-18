@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     DefaultTerminal, Frame,
 };
-use serde::Serialize;
+use serde::{Serialize,Deserialize};
 
 #[derive(Serialize)]
 struct ChatRequest {
@@ -19,6 +19,7 @@ struct App {
     messages: Vec<Message>,
     chat_scroll: u16,
     status: String,
+    config:Config
 }
 
 struct Message {
@@ -29,6 +30,37 @@ struct Message {
 enum Role {
     User,
     Assistant,
+}
+#[derive(Debug, Deserialize)]
+struct ConfigStatusResponse {
+    api_key: bool,
+    model: Option<String>,
+    base_url: Option<String>,
+}
+struct Config{
+    model_name:String,
+    base_url:String,
+    api_key_exist:bool,
+}
+
+impl Config {
+   async fn new() -> color_eyre::Result<Self> {
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get("http://127.0.0.1:8000/config/status")
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<ConfigStatusResponse>()
+            .await?;
+
+        Ok(Self {
+            model_name: response.model.unwrap_or_else(|| "unknown".to_string()),
+            base_url: response.base_url.unwrap_or_else(|| "unknown".to_string()),
+            api_key_exist: response.api_key,
+        })
+    }
 }
 
 #[tokio::main]
@@ -107,11 +139,17 @@ async fn send_chat_stream(
 }
 
 async fn run(mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
+    let config=Config::new().await.unwrap_or_else(|_| Config {
+        model_name: "unknown".to_string(),
+        base_url: "offline".to_string(),
+        api_key_exist: false,
+    });
     let mut app = App {
         input: String::new(),
         messages: vec![],
         chat_scroll: 0,
         status: "ready".to_string(),
+        config:config
     };
 
     loop {
@@ -204,6 +242,14 @@ fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Length(28), Constraint::Min(0)])
         .split(vertical[0]);
 
+
+    let status_color = match app.status.as_str() {
+    "ready" => Color::Green,
+    "streaming" => Color::Yellow,
+    "error" => Color::Red,
+    _ => Color::Gray,
+    };
+
     let config_lines = vec![
         Line::from(Span::styled(" __   __  ____  ", Style::default().fg(Color::Cyan))),
         Line::from(Span::styled(" \\ \\ / / |  _ \\ ", Style::default().fg(Color::Cyan))),
@@ -212,16 +258,17 @@ fn draw(frame: &mut Frame, app: &App) {
         Line::from(Span::styled(" /_/ \\_\\ |____/ ", Style::default().fg(Color::Cyan))),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Provider: ", Style::default().fg(Color::Gray)),
-            Span::styled("DeepSeek", Style::default().fg(Color::Cyan)),
+            Span::styled("Base_url:", Style::default().fg(Color::Gray)),
+            Span::styled(format!("{}",&app.config.base_url.to_string()
+        ), Style::default().fg(Color::White))
         ]),
         Line::from(vec![
             Span::styled("Model: ", Style::default().fg(Color::Gray)),
-            Span::styled("deepseek-chat", Style::default().fg(Color::White)),
+            Span::styled(format!("{}",&app.config.model_name.to_string()), Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Gray)),
-            Span::styled(&app.status, Style::default().fg(Color::Green)),
+            Span::styled(&app.status, Style::default().fg(status_color)),
         ]),
         Line::from(vec![
             Span::styled("Messages: ", Style::default().fg(Color::Gray)),

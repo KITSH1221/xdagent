@@ -55,7 +55,7 @@ def config_status():
 
     return {
         # 不返回真实 api_key，只返回是否存在
-        "api_key": bool(os.getenv("api_key")),
+        "api_key_exist": bool(os.getenv("api_key")),
         "model": os.getenv("model"),
         "base_url": os.getenv("base_url"),
     }
