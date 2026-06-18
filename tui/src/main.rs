@@ -1,13 +1,15 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use futures_util::StreamExt;
 use ratatui::{
+    DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    DefaultTerminal, Frame,
 };
-use serde::{Serialize,Deserialize};
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 #[derive(Serialize)]
 struct ChatRequest {
@@ -19,7 +21,7 @@ struct App {
     messages: Vec<Message>,
     chat_scroll: u16,
     status: String,
-    config:Config
+    config: Config,
 }
 
 struct Message {
@@ -31,20 +33,26 @@ enum Role {
     User,
     Assistant,
 }
+
+enum AppEvent {
+    AssistantChunk(String),
+    AssistantDone,
+    AssistantError(String),
+}
 #[derive(Debug, Deserialize)]
 struct ConfigStatusResponse {
-    api_key: bool,
+    api_key_exist: bool,
     model: Option<String>,
     base_url: Option<String>,
 }
-struct Config{
-    model_name:String,
-    base_url:String,
-    api_key_exist:bool,
+struct Config {
+    model_name: String,
+    base_url: String,
+    api_key_exist: bool,
 }
 
 impl Config {
-   async fn new() -> color_eyre::Result<Self> {
+    async fn new() -> color_eyre::Result<Self> {
         let client = reqwest::Client::new();
 
         let response = client
@@ -58,7 +66,7 @@ impl Config {
         Ok(Self {
             model_name: response.model.unwrap_or_else(|| "unknown".to_string()),
             base_url: response.base_url.unwrap_or_else(|| "unknown".to_string()),
-            api_key_exist: response.api_key,
+            api_key_exist: response.api_key_exist,
         })
     }
 }
@@ -86,147 +94,244 @@ async fn clear_history() -> color_eyre::Result<()> {
     Ok(())
 }
 
-async fn send_chat_stream(
-    app: &mut App,
-    terminal: &mut DefaultTerminal,
-    message: String,
-) -> color_eyre::Result<()> {
-    let client = reqwest::Client::new();
+fn spawn_chat_stream(message: String, tx: mpsc::UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
 
-    let response = client
-        .post("http://127.0.0.1:8000/chat/stream")
-        .json(&ChatRequest { message })
-        .send()
-        .await?
-        .error_for_status()?;
+        let response = client
+            .post("http://127.0.0.1:8000/chat/stream")
+            .json(&ChatRequest { message })
+            .send()
+            .await;
 
-    app.messages.push(Message {
-        role: Role::Assistant,
-        message: String::new(),
-    });
-
-    app.status = "streaming".to_string();
-
-    let mut stream = response.bytes_stream();
-    let mut pending = Vec::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        pending.extend_from_slice(&chunk);
-
-        if let Ok(text) = String::from_utf8(pending.clone()) {
-            if let Some(last) = app.messages.last_mut() {
-                last.message.push_str(&text);
+        let response = match response {
+            Ok(response) => match response.error_for_status() {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                return;
             }
+        };
 
-            pending.clear();
-            app.chat_scroll = u16::MAX;
-            terminal.draw(|frame| draw(frame, app))?;
+        let mut stream = response.bytes_stream();
+        let mut pending = Vec::new();
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    pending.extend_from_slice(&chunk);
+
+                    if let Ok(text) = String::from_utf8(pending.clone()) {
+                        let _ = tx.send(AppEvent::AssistantChunk(text));
+                        pending.clear();
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                    return;
+                }
+            }
         }
-    }
 
-    if !pending.is_empty() {
-        let text = String::from_utf8_lossy(&pending);
-
-        if let Some(last) = app.messages.last_mut() {
-            last.message.push_str(&text);
+        if !pending.is_empty() {
+            let text = String::from_utf8_lossy(&pending).to_string();
+            let _ = tx.send(AppEvent::AssistantChunk(text));
         }
-    }
 
-    app.status = "ready".to_string();
-
-    Ok(())
+        let _ = tx.send(AppEvent::AssistantDone);
+    });
 }
 
 async fn run(mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
-    let config=Config::new().await.unwrap_or_else(|_| Config {
+    let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
+
+    let config = Config::new().await.unwrap_or_else(|_| Config {
         model_name: "unknown".to_string(),
         base_url: "offline".to_string(),
         api_key_exist: false,
     });
+
     let mut app = App {
         input: String::new(),
         messages: vec![],
         chat_scroll: 0,
         status: "ready".to_string(),
-        config:config
+        config,
     };
 
     loop {
-        terminal.draw(|frame| draw(frame, &app))?;
+        let area = terminal.size()?;
+        let chat_width = area.width.saturating_sub(28).saturating_sub(2) as usize;
+        let chat_height = area.height.saturating_sub(5).saturating_sub(2) as usize;
+        let max_scroll = max_chat_scroll(&app, chat_width, chat_height);
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
+        while let Ok(app_event) = rx.try_recv() {
+            handle_app_event(&mut app, app_event);
+        }
+
+        if event::poll(Duration::from_millis(16))? {
+            loop {
+                let Event::Key(key) = event::read()? else {
+                    break;
+                };
+
+                if key.kind == KeyEventKind::Press {
+                    if !handle_key(&mut app, key, &tx, max_scroll) {
+                        return Ok(());
+                    }
+                }
+
+                if !event::poll(Duration::from_millis(0))? {
+                    break;
+                }
+            }
+        }
+
+        terminal.draw(|frame| draw(frame, &app))?;
+    }
+}
+fn handle_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    tx: &mpsc::UnboundedSender<AppEvent>,
+    max_scroll: u16,
+) -> bool {
+    match key.code {
+        KeyCode::Esc => return false,
+
+        KeyCode::Char(c) => {
+            app.input.push(c);
+        }
+
+        KeyCode::Backspace => {
+            app.input.pop();
+        }
+
+        KeyCode::Enter => {
+            let input = app.input.trim().to_string();
+
+            if input.is_empty() {
+                return true;
             }
 
-            match key.code {
-                KeyCode::Esc => break,
+            app.input.clear();
 
-                KeyCode::Char(c) => {
-                    app.input.push(c);
+            if input == "/clear" {
+                app.messages.clear();
+                app.chat_scroll = 0;
+                app.status = "history cleared".to_string();
+                return true;
+            }
+
+            if app.status == "streaming" {
+                app.status = "busy".to_string();
+                return true;
+            }
+
+            app.messages.push(Message {
+                role: Role::User,
+                message: input.clone(),
+            });
+
+            app.messages.push(Message {
+                role: Role::Assistant,
+                message: String::new(),
+            });
+
+            app.chat_scroll = u16::MAX;
+            app.status = "streaming".to_string();
+
+            spawn_chat_stream(input, tx.clone());
+        }
+
+        KeyCode::Up => {
+            if app.chat_scroll == u16::MAX {
+                app.chat_scroll = max_scroll;
+            }
+
+            app.chat_scroll = app.chat_scroll.saturating_sub(1);
+        }
+
+        KeyCode::Down => {
+            if app.chat_scroll == u16::MAX {
+                app.chat_scroll = max_scroll;
+            }
+
+            app.chat_scroll = app.chat_scroll.saturating_add(1).min(max_scroll);
+        }
+
+        KeyCode::PageUp => {
+            if app.chat_scroll == u16::MAX {
+                app.chat_scroll = max_scroll;
+            }
+
+            app.chat_scroll = app.chat_scroll.saturating_sub(5);
+        }
+
+        KeyCode::PageDown => {
+            if app.chat_scroll == u16::MAX {
+                app.chat_scroll = max_scroll;
+            }
+
+            app.chat_scroll = app.chat_scroll.saturating_add(5).min(max_scroll);
+        }
+        _ => {}
+    }
+
+    true
+}
+fn handle_app_event(app: &mut App, app_event: AppEvent) {
+    match app_event {
+        AppEvent::AssistantChunk(text) => {
+            if let Some(last) = app.messages.last_mut() {
+                if matches!(last.role, Role::Assistant) {
+                    last.message.push_str(&text);
                 }
+            }
 
-                KeyCode::Backspace => {
-                    app.input.pop();
+            app.chat_scroll = u16::MAX;
+        }
+
+        AppEvent::AssistantDone => {
+            app.status = "ready".to_string();
+        }
+
+        AppEvent::AssistantError(error) => {
+            app.status = "error".to_string();
+
+            if let Some(last) = app.messages.last_mut() {
+                if matches!(last.role, Role::Assistant) {
+                    last.message.push_str(&format!("Error: {error}"));
                 }
-
-                KeyCode::Enter => {
-                    let input = app.input.trim().to_string();
-
-                    if input.is_empty() {
-                        continue;
-                    }
-
-                    app.input.clear();
-
-                    if input == "/clear" {
-                        clear_history().await?;
-                        app.messages.clear();
-                        app.chat_scroll = 0;
-                        app.status = "history cleared".to_string();
-                        continue;
-                    }
-
-                    app.messages.push(Message {
-                        role: Role::User,
-                        message: input.clone(),
-                    });
-
-                    app.chat_scroll = 0;
-
-                    if let Err(error) = send_chat_stream(&mut app, &mut terminal, input).await {
-                        app.status = "error".to_string();
-
-                        app.messages.push(Message {
-                            role: Role::Assistant,
-                            message: format!("Error: {error}"),
-                        });
-                    }
-                }
-
-                KeyCode::Up => {
-                    app.chat_scroll = app.chat_scroll.saturating_sub(1);
-                }
-
-                KeyCode::Down => {
-                    app.chat_scroll = app.chat_scroll.saturating_add(1);
-                }
-
-                KeyCode::PageUp => {
-                    app.chat_scroll = app.chat_scroll.saturating_sub(5);
-                }
-
-                KeyCode::PageDown => {
-                    app.chat_scroll = app.chat_scroll.saturating_add(5);
-                }
-
-                _ => {}
             }
         }
     }
+}
+fn max_chat_scroll(app: &App, chat_width: usize, chat_height: usize) -> u16 {
+    let line_count = if app.messages.is_empty() {
+        1
+    } else {
+        app.messages
+            .iter()
+            .map(|message| {
+                let prefix_width = match message.role {
+                    Role::User => 5,
+                    Role::Assistant => 4,
+                };
+                let content_width = chat_width.saturating_sub(prefix_width).max(1);
+                let message_width = message.message.chars().count().max(1);
 
-    Ok(())
+                message_width.div_ceil(content_width)
+            })
+            .sum()
+    };
+
+    line_count.saturating_sub(chat_height) as u16
 }
 
 fn draw(frame: &mut Frame, app: &App) {
@@ -242,29 +347,48 @@ fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Length(28), Constraint::Min(0)])
         .split(vertical[0]);
 
-
     let status_color = match app.status.as_str() {
-    "ready" => Color::Green,
-    "streaming" => Color::Yellow,
-    "error" => Color::Red,
-    _ => Color::Gray,
+        "ready" => Color::Green,
+        "streaming" => Color::Yellow,
+        "error" => Color::Red,
+        _ => Color::Gray,
     };
 
     let config_lines = vec![
-        Line::from(Span::styled(" __   __  ____  ", Style::default().fg(Color::Cyan))),
-        Line::from(Span::styled(" \\ \\ / / |  _ \\ ", Style::default().fg(Color::Cyan))),
-        Line::from(Span::styled("  \\ V /  | | | |", Style::default().fg(Color::Cyan))),
-        Line::from(Span::styled("  / . \\  | |_| |", Style::default().fg(Color::Cyan))),
-        Line::from(Span::styled(" /_/ \\_\\ |____/ ", Style::default().fg(Color::Cyan))),
+        Line::from(Span::styled(
+            " __   __  ____  ",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(Span::styled(
+            " \\ \\ / / |  _ \\ ",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(Span::styled(
+            "  \\ V /  | | | |",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(Span::styled(
+            "  / . \\  | |_| |",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(Span::styled(
+            " /_/ \\_\\ |____/ ",
+            Style::default().fg(Color::Cyan),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::styled("Base_url:", Style::default().fg(Color::Gray)),
-            Span::styled(format!("{}",&app.config.base_url.to_string()
-        ), Style::default().fg(Color::White))
+            Span::styled(
+                format!("{}", &app.config.base_url.to_string()),
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Model: ", Style::default().fg(Color::Gray)),
-            Span::styled(format!("{}",&app.config.model_name.to_string()), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{}", &app.config.model_name.to_string()),
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Gray)),
@@ -272,7 +396,10 @@ fn draw(frame: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("Messages: ", Style::default().fg(Color::Gray)),
-            Span::styled(app.messages.len().to_string(), Style::default().fg(Color::White)),
+            Span::styled(
+                app.messages.len().to_string(),
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(""),
         Line::from(Span::styled("Keys", Style::default().fg(Color::DarkGray))),
@@ -315,19 +442,20 @@ fn draw(frame: &mut Frame, app: &App) {
         ]));
     }
 
+    let chat_width = top[1].width.saturating_sub(2) as usize;
     let chat_height = top[1].height.saturating_sub(2) as usize;
-    let max_scroll = chat_lines.len().saturating_sub(chat_height) as u16;
+    let max_scroll = max_chat_scroll(app, chat_width, chat_height);
     let chat_scroll = app.chat_scroll.min(max_scroll);
 
     let chat = Paragraph::new(chat_lines)
-    .scroll((chat_scroll, 0))
-    .wrap(Wrap { trim: false })
-    .block(
-        Block::default()
-            .title("Chat")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Blue)),
-    );
+        .scroll((chat_scroll, 0))
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .title("Chat")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        );
 
     let input = Paragraph::new(vec![Line::from(vec![
         Span::styled("> ", Style::default().fg(Color::Cyan)),
