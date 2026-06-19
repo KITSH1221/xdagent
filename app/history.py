@@ -1,35 +1,98 @@
-"""In-memory chat history.
+import sqlite3
+from pathlib import Path
 
-The history is reset when the FastAPI process restarts. A later version can
-replace this module with JSON, SQLite, or another persistence layer.
-"""
+"""SQLite-backed chat history storage."""
 
-chat_history: list[dict[str, str]] = []
+DB_PATH = Path("data/xdagent.db")
+
+
+def get_conn() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
 
 
 def get_messages() -> list[dict[str, str]]:
     """Return the current conversation history."""
+    init_db()
 
-    return chat_history
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT role, content
+            FROM messages
+            ORDER BY id ASC
+            """
+        ).fetchall()
+
+    return [
+        {
+            "role": row["role"],
+            "content": row["content"],
+        }
+        for row in rows
+    ]
 
 
 def add_message(role: str, content: str) -> None:
     """Append one message to the conversation history."""
+    init_db()
 
-    chat_history.append({
-        "role": role,
-        "content": content,
-    })
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO messages (role, content)
+            VALUES (?, ?)
+            """,
+            (role, content),
+        )
 
 
 def pop_last_user_message() -> None:
-    """Remove the last user message after a failed LLM request."""
+    """Remove the last message only if it is a user message."""
+    init_db()
 
-    if chat_history and chat_history[-1]["role"] == "user":
-        chat_history.pop()
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, role
+            FROM messages
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if row is None or row["role"] != "user":
+            return
+
+        conn.execute(
+            """
+            DELETE FROM messages
+            WHERE id = ?
+            """,
+            (row["id"],),
+        )
 
 
 def clear_messages() -> None:
     """Clear the current conversation history."""
+    init_db()
 
-    chat_history.clear()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM messages")

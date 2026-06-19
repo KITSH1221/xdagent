@@ -195,6 +195,7 @@ async fn run(mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
         terminal.draw(|frame| draw(frame, &app))?;
     }
 }
+
 fn handle_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
@@ -225,6 +226,10 @@ fn handle_key(
                 app.messages.clear();
                 app.chat_scroll = 0;
                 app.status = "history cleared".to_string();
+
+                tokio::spawn(async {
+                    let _ = clear_history().await;
+                });
                 return true;
             }
 
@@ -312,6 +317,7 @@ fn handle_app_event(app: &mut App, app_event: AppEvent) {
         }
     }
 }
+
 fn max_chat_scroll(app: &App, chat_width: usize, chat_height: usize) -> u16 {
     let line_count = if app.messages.is_empty() {
         1
