@@ -319,7 +319,7 @@ fn handle_app_event(app: &mut App, app_event: AppEvent) {
 }
 
 fn max_chat_scroll(app: &App, chat_width: usize, chat_height: usize) -> u16 {
-    let line_count = if app.messages.is_empty() {
+    let line_count: usize = if app.messages.is_empty() {
         1
     } else {
         app.messages
@@ -329,10 +329,16 @@ fn max_chat_scroll(app: &App, chat_width: usize, chat_height: usize) -> u16 {
                     Role::User => 5,
                     Role::Assistant => 4,
                 };
-                let content_width = chat_width.saturating_sub(prefix_width).max(1);
-                let message_width = message.message.chars().count().max(1);
 
-                message_width.div_ceil(content_width)
+                let content_width = chat_width.saturating_sub(prefix_width).max(1);
+
+                normalized_lines(&message.message)
+                    .iter()
+                    .map(|line| {
+                        let message_width = line.chars().count().max(1);
+                        message_width.div_ceil(content_width)
+                    })
+                    .sum::<usize>()
             })
             .sum()
     };
@@ -425,19 +431,30 @@ fn draw(frame: &mut Frame, app: &App) {
     let mut chat_lines = Vec::new();
 
     for message in &app.messages {
-        match message.role {
-            Role::User => {
+        let (label, label_color, text_color) = match message.role {
+            Role::User => ("You: ", Color::Cyan, Color::White),
+            Role::Assistant => ("AI: ", Color::Green, Color::Gray),
+        };
+
+        let mut lines = normalized_lines(&message.message).into_iter();
+
+        if let Some(first_line) = lines.next() {
+            chat_lines.push(Line::from(vec![
+                Span::styled(label, Style::default().fg(label_color)),
+                Span::styled(first_line, Style::default().fg(text_color)),
+            ]));
+
+            for line in lines {
                 chat_lines.push(Line::from(vec![
-                    Span::styled("You: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(&message.message, Style::default().fg(Color::White)),
+                    Span::raw(" ".repeat(label.len())),
+                    Span::styled(line, Style::default().fg(text_color)),
                 ]));
             }
-            Role::Assistant => {
-                chat_lines.push(Line::from(vec![
-                    Span::styled("AI: ", Style::default().fg(Color::Green)),
-                    Span::styled(&message.message, Style::default().fg(Color::Gray)),
-                ]));
-            }
+        } else {
+            chat_lines.push(Line::from(vec![
+                Span::styled(label, Style::default().fg(label_color)),
+                Span::styled("", Style::default().fg(text_color)),
+            ]));
         }
     }
 
@@ -478,4 +495,34 @@ fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(config, top[0]);
     frame.render_widget(chat, top[1]);
     frame.render_widget(input, vertical[1]);
+}
+// old version
+// fn normalized_lines(text: &str) -> Vec<&str> {
+//     text.lines()
+//         .filter(|line| !line.trim().is_empty())
+//         .collect()
+// }
+fn normalized_lines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut previous_blank = false;
+
+    for line in text.lines() {
+        let is_blank = line.trim().is_empty();
+
+        if is_blank {
+            if !previous_blank {
+                lines.push("");
+            }
+        } else {
+            lines.push(line);
+        }
+
+        previous_blank = is_blank;
+    }
+
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+
+    lines
 }

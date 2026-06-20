@@ -11,6 +11,7 @@ IGNORE_DIRS = {
     "target",
     "node_modules",
     "data",
+    ".env",
 }
 
 MAX_FILE_SIZE = 200_000
@@ -52,7 +53,7 @@ def read_file(path:str)->dict[str,object]:
     
     try:
         content=target.read_text(encoding="utf-8")
-    except UnicodeEncodeError:
+    except UnicodeDecodeError:
         raise HTTPException(status_code=400,detail="file is not utf-8 text")
     
     return {
@@ -60,4 +61,34 @@ def read_file(path:str)->dict[str,object]:
         "size":size,
         "content":content,
     }
+
+def search_text(query:str)-> list[dict[str,object]]:
+
+    results=[]
+
+    for path in PROJECT_ROOT.rglob("*"):
+        if any(part in IGNORE_DIRS for part in path.parts ):
+            continue
+
+        if not path.is_file():
+            continue
+
+        if path.stat().st_size>MAX_FILE_SIZE:
+            continue
+
+        try:
+            lines=path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            continue
+
+        for line_no,line in enumerate(lines,start=1):
+            if query in line:
+                results.append(
+                   {
+                    "path": path.relative_to(PROJECT_ROOT).as_posix(),
+                    "line": line_no,
+                    "text": line.strip(),
+                    }
+                )
+    return results
 
