@@ -8,7 +8,6 @@ DB_PATH = Path("data/xdagent.db")
 
 def get_conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -31,21 +30,12 @@ def init_db() -> None:
 def get_messages() -> list[dict[str, str]]:
     """Return the current conversation history."""
     init_db()
-
     with get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT role, content
-            FROM messages
-            ORDER BY id ASC
-            """
+            "SELECT role, content FROM messages ORDER BY id ASC"
         ).fetchall()
-
     return [
-        {
-            "role": row["role"],
-            "content": row["content"],
-        }
+        {"role": row["role"], "content": row["content"]}
         for row in rows
     ]
 
@@ -53,13 +43,9 @@ def get_messages() -> list[dict[str, str]]:
 def add_message(role: str, content: str) -> None:
     """Append one message to the conversation history."""
     init_db()
-
     with get_conn() as conn:
         conn.execute(
-            """
-            INSERT INTO messages (role, content)
-            VALUES (?, ?)
-            """,
+            "INSERT INTO messages (role, content) VALUES (?, ?)",
             (role, content),
         )
 
@@ -67,32 +53,16 @@ def add_message(role: str, content: str) -> None:
 def pop_last_user_message() -> None:
     """Remove the last message only if it is a user message."""
     init_db()
-
     with get_conn() as conn:
         row = conn.execute(
-            """
-            SELECT id, role
-            FROM messages
-            ORDER BY id DESC
-            LIMIT 1
-            """
+            "SELECT id, role FROM messages ORDER BY id DESC LIMIT 1"
         ).fetchone()
-
-        if row is None or row["role"] != "user":
-            return
-
-        conn.execute(
-            """
-            DELETE FROM messages
-            WHERE id = ?
-            """,
-            (row["id"],),
-        )
+        if row is not None and row["role"] == "user":
+            conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
 
 
 def clear_messages() -> None:
     """Clear the current conversation history."""
     init_db()
-
     with get_conn() as conn:
         conn.execute("DELETE FROM messages")

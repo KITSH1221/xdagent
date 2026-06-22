@@ -23,12 +23,13 @@ class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
 
+
 class WriteFileRequest(BaseModel):
-    path:str
-    content:str
+    path: str
+    content: str
+
 
 class EditFileRequest(BaseModel):
-    path:str
-    old:str
-    new:str
-    
+    path: str
+    old: str
+    new: str
