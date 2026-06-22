@@ -413,6 +413,17 @@ fn draw(frame: &mut Frame, app: &App) {
                 Style::default().fg(Color::White),
             ),
         ]),
+        Line::from(vec![
+            Span::styled("api_key: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if app.config.api_key_exist {
+                    "set"
+                } else {
+                    "missing"
+                },
+                Style::default().fg(Color::White),
+            ),
+        ]),
         Line::from(""),
         Line::from(Span::styled("Keys", Style::default().fg(Color::DarkGray))),
         Line::from("Enter send"),

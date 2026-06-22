@@ -10,6 +10,7 @@ from app.routes import chat, config, files
 async def lifespan(app: FastAPI):
     print("服务启动")
     init_db()
+
     yield
     print("服务关闭")
 

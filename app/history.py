@@ -1,7 +1,6 @@
+"""SQLite-backed chat history storage."""
 import sqlite3
 from pathlib import Path
-
-"""SQLite-backed chat history storage."""
 
 DB_PATH = Path("data/xdagent.db")
 
@@ -29,7 +28,7 @@ def init_db() -> None:
 
 def get_messages() -> list[dict[str, str]]:
     """Return the current conversation history."""
-    init_db()
+    #init_db()
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT role, content FROM messages ORDER BY id ASC"
@@ -42,7 +41,7 @@ def get_messages() -> list[dict[str, str]]:
 
 def add_message(role: str, content: str) -> None:
     """Append one message to the conversation history."""
-    init_db()
+    #init_db()
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO messages (role, content) VALUES (?, ?)",
@@ -52,7 +51,7 @@ def add_message(role: str, content: str) -> None:
 
 def pop_last_user_message() -> None:
     """Remove the last message only if it is a user message."""
-    init_db()
+    #init_db()
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, role FROM messages ORDER BY id DESC LIMIT 1"
@@ -63,6 +62,6 @@ def pop_last_user_message() -> None:
 
 def clear_messages() -> None:
     """Clear the current conversation history."""
-    init_db()
+    #init_db()
     with get_conn() as conn:
         conn.execute("DELETE FROM messages")

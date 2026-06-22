@@ -33,15 +33,18 @@ def chatbot(request: ChatRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="message is empty")
 
-    return {"message": run_agent(user_message)}
+
+    return {"message":run_agent(user_message)}
 
 
-# @router.post("/chat/stream")
-# def chatbot_stream(request: ChatRequest):
-#     """Handle one streaming chat request."""
+@router.post("/chat/stream")
+def chatbot_stream(request: ChatRequest):
+    """Handle one streaming chat request."""
 
-#     user_message = request.message.strip()
-#     if not user_message:
-#         raise HTTPException(status_code=400, detail="message is empty")
+    user_message = request.message.strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="message is empty")
 
-#     return StreamingResponse(chat_stream(user_message), media_type="text/plain")
+    def generator():
+        yield run_agent(user_message)
+    return StreamingResponse(generator(), media_type="text/plain")

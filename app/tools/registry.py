@@ -1,135 +1,90 @@
-from typing import Any, Callable
+import inspect
+from typing import Any, Callable,get_type_hints
 
 from fastapi import HTTPException
-
-from app.tools.read_files import list_files, read_file, search_text
-from app.tools.write_files import edit_file, write_file
 
 
 ToolFunction = Callable[..., Any]
 
+_TOOL_FUNCTIONS:dict[str,ToolFunction]={}
+_TOOL_DESCRIPTIONS:dict[str,str]={}
 
-TOOL_FUNCTIONS: dict[str, ToolFunction] = {
-    "list_files": list_files,
-    "read_file": read_file,
-    "search_text": search_text,
-    "write_file": write_file,
-    "edit_file": edit_file,
-}
+def tool(description:str):
+
+    def wrapper(func:ToolFunction)->ToolFunction:
+        _TOOL_FUNCTIONS[func.__name__]=func
+        _TOOL_DESCRIPTIONS[func.__name__]=description
+        return func
+    
+    return wrapper
+
+def python_type_json_type(annotation:Any)->str:
+    if annotation is str:
+        return "string"
+    if annotation is int:
+        return "integer"
+    if annotation is float:
+        return "number"
+    if annotation is bool:
+        return "boolean"
+    
+    return "string"
+
+def build_tool_schema(name:str,func:ToolFunction)->dict[str,Any]:
+    signature=inspect.signature(func)
+    hints=get_type_hints(func)
+
+    properties={}
+    required=[]
 
 
-TOOL_SCHEMAS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files",
-            "description": "List files inside the current project.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read a UTF-8 text file from the project.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Project-relative file path.",
-                    }
-                },
-                "required": ["path"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_text",
-            "description": "Search for text inside project files.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Text to search for.",
-                    }
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Create or completely replace a project file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "content": {"type": "string"},
-                },
-                "required": ["path", "content"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": "Replace the first occurrence of text in a file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "old": {"type": "string"},
-                    "new": {"type": "string"},
-                },
-                "required": ["path", "old", "new"],
-                "additionalProperties": False,
-            },
-        },
-    },
-]
+    for param_name,param in signature.parameters.items():
 
+        annotation=hints.get(param_name,str)
+
+        properties[param_name]={
+            "type":python_type_json_type(annotation),
+        }
+        if param.default in inspect.Parameter.empty:
+            required.append(param_name)
+
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, ""),
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+
+def get_tool_schemas()->list[dict[str,Any]]:
+    return [
+        build_tool_schema(name,func)
+        for name,func in _TOOL_FUNCTIONS.items()
+    ]
 
 def dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
-    tool = TOOL_FUNCTIONS.get(name)
+    tool_func=_TOOL_FUNCTIONS.get(name)
 
-    if tool is None:
+    if tool_func is None:
         return {
             "ok": False,
             "error": f"Unknown tool: {name}",
         }
 
     try:
-        result = tool(**arguments)
+        result = tool_func(**arguments)
 
         return {
             "ok": True,
             "result": result,
-        }
-
-    except HTTPException as exc:
-        return {
-            "ok": False,
-            "error": exc.detail,
-        }
-
-    except TypeError as exc:
-        return {
-            "ok": False,
-            "error": f"Invalid tool arguments: {exc}",
         }
 
     except Exception as exc:

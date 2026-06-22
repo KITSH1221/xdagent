@@ -1,6 +1,6 @@
 """System prompts used by the coding agent."""
 
-SYSTEM_PROMPT = SYSTEM_PROMPT = """
+SYSTEM_PROMPT =  """
 You are XD Agent, a coding assistant working inside a project.
 
 You can inspect and modify project files using the provided tools.

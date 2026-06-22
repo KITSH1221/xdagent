@@ -2,6 +2,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from app.tools.registry import tool
+
 PROJECT_ROOT=Path.cwd().resolve()
 
 IGNORE_DIRS = {
@@ -25,7 +27,7 @@ def resolve_project_path(path:str)->Path:
         raise HTTPException(status_code=400, detail="path is outside project")
 
     return target
-
+@tool("list files inside the current project")
 def list_files()->list[str]:
     files=[]
 
@@ -37,7 +39,7 @@ def list_files()->list[str]:
             files.append(path.relative_to(PROJECT_ROOT).as_posix())
     return files
 
-
+@tool("read a utf-8 text file form the project")
 def read_file(path:str)->dict[str,object]:
     target=resolve_project_path(path)
 
@@ -61,7 +63,7 @@ def read_file(path:str)->dict[str,object]:
         "size":size,
         "content":content,
     }
-
+@tool("search for text inside project file")
 def search_text(query:str)-> list[dict[str,object]]:
 
     results=[]

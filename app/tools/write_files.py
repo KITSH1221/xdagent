@@ -1,7 +1,6 @@
 from fastapi import HTTPException
 
 from app.tools.read_files import PROJECT_ROOT, resolve_project_path
-from app.schemas import WriteFileRequest,EditFileRequest
 
 PROTECTED_FILES = {
     ".env",

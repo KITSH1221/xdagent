@@ -4,7 +4,6 @@ from app.schemas import EditFileRequest, WriteFileRequest
 from app.tools.read_files import list_files, read_file
 from app.tools.write_files import edit_file, write_file
 
-
 router = APIRouter(prefix="/files", tags=["files"])
 
 

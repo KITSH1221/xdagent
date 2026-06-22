@@ -8,7 +8,7 @@ router = APIRouter()
 
 
 @router.post("/config")
-async def save_config(config: LLMConfig):
+def save_config(config: LLMConfig):
     """Save model, base URL, and API key configuration."""
 
     save_llm_config(config)

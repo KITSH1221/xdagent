@@ -1,4 +1,4 @@
-
+"""Agent loop orchestration will be implemented in this module."""
 import json
 from typing import Any
 
@@ -8,13 +8,12 @@ from openai import OpenAIError
 from app.agent.context import build_agent_context
 from app.history import add_message, pop_last_user_message
 from app.llm import get_client_and_model
-from app.tools.registry import TOOL_SCHEMAS, dispatch_tool
-
-"""Agent loop orchestration will be implemented in this module."""
+from app.tools.registry import dispatch_tool, get_tool_schemas
 
 
 MAX_AGENT_STEPS=8
 MAX_RESULT_LENGTH=50_000
+tools=get_tool_schemas()
 
 def serialize_tool_result(result:Any)->str:
     content=json.dumps(
@@ -40,7 +39,7 @@ def run_agent(user_message:str)->str:
             response=client.chat.completions.create(
                 model=model,
                 messages=messages,
-                tools=TOOL_SCHEMAS,
+                tools=tools,
                 tool_choice="auto",
                 stream=False,
                 timeout=120,
