@@ -4,6 +4,11 @@ from typing import Any, Callable,get_type_hints
 from fastapi import HTTPException
 
 
+MUTATING_TOOLS=[
+    "write_file",
+    "edit_file"
+]
+
 ToolFunction = Callable[..., Any]
 
 _TOOL_FUNCTIONS:dict[str,ToolFunction]={}
@@ -45,7 +50,7 @@ def build_tool_schema(name:str,func:ToolFunction)->dict[str,Any]:
         properties[param_name]={
             "type":python_type_json_type(annotation),
         }
-        if param.default in inspect.Parameter.empty:
+        if param.default is inspect.Parameter.empty:
             required.append(param_name)
 
     return {
@@ -70,7 +75,18 @@ def get_tool_schemas()->list[dict[str,Any]]:
         for name,func in _TOOL_FUNCTIONS.items()
     ]
 
-def dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
+
+def dispatch_tool(name: str, arguments: dict[str, Any],allow_write:bool=False) -> Any:
+    if name in MUTATING_TOOLS and not allow_write:
+        return {
+            "ok": False,
+            "requires_approval": True,
+            "tool": name,
+            "arguments": arguments,
+            "error": "User approval is required",
+        }
+    
+    
     tool_func=_TOOL_FUNCTIONS.get(name)
 
     if tool_func is None:

@@ -1,10 +1,16 @@
 from pathlib import Path
 
 from fastapi import HTTPException
-
 from app.tools.registry import tool
 
 PROJECT_ROOT=Path.cwd().resolve()
+
+PROTECTED_FILES = {
+    ".env",
+    ".git",
+    ".venv",
+    ".db",
+}
 
 IGNORE_DIRS = {
     ".git",
@@ -15,6 +21,7 @@ IGNORE_DIRS = {
     "data",
     ".env",
 }
+
 
 MAX_FILE_SIZE = 200_000
 
@@ -27,6 +34,17 @@ def resolve_project_path(path:str)->Path:
         raise HTTPException(status_code=400, detail="path is outside project")
 
     return target
+
+def ensure_protected_file(target:str):
+    relative_path=target.relative_to(PROJECT_ROOT)
+
+    if any(part in PROTECTED_FILES for part in relative_path.parts):
+        raise HTTPException(
+            status_code=403,
+            detail="cant query the protected file"
+        )
+
+
 @tool("list files inside the current project")
 def list_files()->list[str]:
     files=[]
@@ -42,6 +60,8 @@ def list_files()->list[str]:
 @tool("read a utf-8 text file form the project")
 def read_file(path:str)->dict[str,object]:
     target=resolve_project_path(path)
+
+    ensure_protected_file(target)
 
     if not target.exists():
         raise HTTPException(status_code=404,detail="file not found")
@@ -63,6 +83,7 @@ def read_file(path:str)->dict[str,object]:
         "size":size,
         "content":content,
     }
+
 @tool("search for text inside project file")
 def search_text(query:str)-> list[dict[str,object]]:
 
@@ -71,7 +92,7 @@ def search_text(query:str)-> list[dict[str,object]]:
     for path in PROJECT_ROOT.rglob("*"):
         if any(part in IGNORE_DIRS for part in path.parts ):
             continue
-
+        
         if not path.is_file():
             continue
 

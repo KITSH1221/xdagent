@@ -1,14 +1,24 @@
-"""SQLite-backed chat history storage."""
+import json
 import sqlite3
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
-DB_PATH = Path("data/xdagent.db")
+
+PROJECT_ROOT = Path.cwd().resolve()
+DB_PATH = PROJECT_ROOT / "data" / "xdagent.db"
+
+def generate_id()->str:
+    return uuid4().hex
 
 
 def get_conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    
+    conn.execute("PRAGMA foreign_keys = ON")
+
     return conn
 
 
@@ -16,15 +26,51 @@ def init_db() -> None:
     with get_conn() as conn:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                active_leaf_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                parent_id TEXT,
+                role TEXT NOT NULL,
+                content TEXT,
+                metadata TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (conversation_id)
+                    REFERENCES conversations(id)
+                    ON DELETE CASCADE,
+
+                FOREIGN KEY (parent_id)
+                    REFERENCES messages(id)
+                    ON DELETE RESTRICT
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation
+            ON messages(conversation_id)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_messages_parent
+            ON messages(parent_id)
+            """
+        )
 
 def get_messages() -> list[dict[str, str]]:
     """Return the current conversation history."""

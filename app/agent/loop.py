@@ -13,7 +13,6 @@ from app.tools.registry import dispatch_tool, get_tool_schemas
 
 MAX_AGENT_STEPS=8
 MAX_RESULT_LENGTH=50_000
-tools=get_tool_schemas()
 
 def serialize_tool_result(result:Any)->str:
     content=json.dumps(
@@ -30,7 +29,18 @@ def serialize_tool_result(result:Any)->str:
 
 def run_agent(user_message:str)->str:
     client,model=get_client_and_model()
+
+    tools=get_tool_schemas()
+    if not tools:
+        raise HTTPException(
+            status_code=500,
+            detail="the tool are not registed"
+        )
     
+    print(
+    "registered tools:",
+    [item["function"]["name"] for item in tools],
+)
     add_message("user",user_message)
     messages=build_agent_context()
 
@@ -121,4 +131,3 @@ def run_agent(user_message:str)->str:
             status_code=500,
             detail=f"Agent failed: {exc}",
         ) from exc
-        

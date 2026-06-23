@@ -47,4 +47,5 @@ def chatbot_stream(request: ChatRequest):
 
     def generator():
         yield run_agent(user_message)
+
     return StreamingResponse(generator(), media_type="text/plain")
