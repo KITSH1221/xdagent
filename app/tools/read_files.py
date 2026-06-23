@@ -35,8 +35,9 @@ def resolve_project_path(path:str)->Path:
 
     return target
 
-def ensure_protected_file(target:str):
-    relative_path=target.relative_to(PROJECT_ROOT)
+def ensure_protected_file(target:str|Path)->None:
+    target = Path(target).resolve()
+    relative_path = target.relative_to(PROJECT_ROOT)
 
     if any(part in PROTECTED_FILES for part in relative_path.parts):
         raise HTTPException(
