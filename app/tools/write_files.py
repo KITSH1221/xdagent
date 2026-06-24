@@ -4,9 +4,8 @@ from app.tools.read_files import (
     MAX_FILE_SIZE,
     ensure_protected_file,
     resolve_project_path,
-    PROJECT_ROOT
 )
-
+from app.workspace import get_workspace_root
 from app.tools.registry import tool
 
 def validate_content_size(content:str)->None:
@@ -21,6 +20,7 @@ def validate_content_size(content:str)->None:
 @tool("create a new utf-8 file inside the project")
 def write_file(path: str, content: str) -> dict[str, object]:
     target = resolve_project_path(path)
+    project_root=get_workspace_root()
     ensure_protected_file(target)
     validate_content_size(content)
 
@@ -31,13 +31,14 @@ def write_file(path: str, content: str) -> dict[str, object]:
     target.write_text(content, encoding="utf-8")
 
     return {
-        "path": target.relative_to(PROJECT_ROOT).as_posix(),
+        "path": target.relative_to(project_root).as_posix(),
         "size": target.stat().st_size,
         "create":True,
     }
 
 @tool("replace exactly one occurrence of text in an existing project file")
 def edit_file(path: str, old: str, new: str) -> dict[str, object]:
+    project_root=get_workspace_root()
     target = resolve_project_path(path)
     ensure_protected_file(target)
 
@@ -87,7 +88,7 @@ def edit_file(path: str, old: str, new: str) -> dict[str, object]:
     target.write_text(updated, encoding="utf-8")
 
     return {
-        "path": target.relative_to(PROJECT_ROOT).as_posix(),
+        "path": target.relative_to(project_root).as_posix(),
         "replacements": 1,
         "size": target.stat().st_size,
     }

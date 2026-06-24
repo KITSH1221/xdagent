@@ -15,6 +15,13 @@ class ChatRequest(BaseModel):
     """Request body for a user chat message."""
 
     message: str
+    conversation_id:str ="default"
+
+class CreateConversationRequest(BaseModel):
+
+    title: str
+    workspace_path: str | None = None
+
 
 
 class Message(BaseModel):
@@ -33,3 +40,7 @@ class EditFileRequest(BaseModel):
     path: str
     old: str
     new: str
+
+
+class SwitchLeafRequest(BaseModel):
+    message_id: str | None

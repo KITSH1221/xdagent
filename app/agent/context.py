@@ -7,8 +7,8 @@ from app.history import get_messages
 
 MAX_HISTORY_MESSAGES = 30
 
-def build_agent_context()->list[dict[str,Any]]:
-    history=get_messages()
+def build_agent_context(conversation_id:str)->list[dict[str,Any]]:
+    history=get_messages(conversation_id)
 
     recent_history=history[-MAX_HISTORY_MESSAGES:]
 

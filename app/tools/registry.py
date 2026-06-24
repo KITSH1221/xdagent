@@ -1,8 +1,6 @@
 import inspect
 from typing import Any, Callable,get_type_hints
 
-from fastapi import HTTPException
-
 
 MUTATING_TOOLS=[
     "write_file",

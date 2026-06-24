@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.history import init_db
-from app.routes import chat, config, files
+from app.routes import chat, config, conversation, files
 
 
 @asynccontextmanager
@@ -19,4 +19,5 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(files.router)
 app.include_router(config.router)
+app.include_router(conversation.router)
 app.include_router(chat.router)
