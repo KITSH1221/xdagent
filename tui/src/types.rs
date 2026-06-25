@@ -32,13 +32,18 @@ pub(crate) struct MessageNode {
     pub(crate) created_at: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ConversationInfo {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) mode: String,
     pub(crate) workspace_path: Option<String>,
     pub(crate) active_leaf_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConversationListResponse {
+    pub(crate) conversations: Vec<ConversationInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +73,7 @@ pub(crate) struct ConfigStatusResponse {
     pub(crate) model: Option<String>,
     pub(crate) base_url: Option<String>,
 }
-
+#[warn(dead_code)]
 pub(crate) struct Config {
     pub(crate) model_name: String,
     pub(crate) base_url: String,
@@ -113,6 +118,7 @@ impl AppStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Focus {
+    Conversations,
     Tree,
     Chat,
     Input,
@@ -121,19 +127,22 @@ pub(crate) enum Focus {
 impl Focus {
     pub(crate) fn next(self) -> Self {
         match self {
+            Self::Conversations => Self::Tree,
             Self::Tree => Self::Chat,
             Self::Chat => Self::Input,
-            Self::Input => Self::Tree,
+            Self::Input => Self::Conversations,
         }
     }
 }
 
 pub(crate) enum AppEvent {
+    ConversationsLoaded(Vec<ConversationInfo>),
     HistoryLoaded {
         tree: ConversationTreeResponse,
         path: ConversationPathResponse,
     },
     BranchSwitched(SwitchLeafResponse),
+    ConversationDeleted,
     HistoryCleared,
     AssistantChunk(String),
     AssistantDone,

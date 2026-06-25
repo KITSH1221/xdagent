@@ -541,3 +541,19 @@ def clear_messages(conversation_id: str = DEFAULT_CONVERSATION_ID,) -> None:
             """,
             (conversation_id,),
         )
+
+        
+def delete_conversation(conversation_id: str) -> None:
+    if conversation_id == DEFAULT_CONVERSATION_ID:
+        raise ValueError("default conversation cannot be deleted")
+
+    with get_conn() as conn:
+        ensure_conversation(conn, conversation_id)
+
+        conn.execute(
+            """
+            DELETE FROM conversations
+            WHERE id = ?
+            """,
+            (conversation_id,),
+        )

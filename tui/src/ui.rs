@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::app::{App, normalized_lines};
-use crate::types::{AppStatus, Focus, MessageNode, Role};
+use crate::types::{AppStatus, ConversationInfo, Focus, MessageNode, Role};
 
 pub(crate) fn draw(frame: &mut Frame, app: &App) {
     let vertical = Layout::default()
@@ -22,16 +22,22 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
         .split(vertical[0]);
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(12), Constraint::Min(5)])
+        .constraints([
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Min(5),
+        ])
         .split(top[0]);
 
     let config = render_config(app);
-    let tree = render_tree(app, left[1].height.saturating_sub(2) as usize);
+    let conversations = render_conversations(app, left[1].height.saturating_sub(2) as usize);
+    let tree = render_tree(app, left[2].height.saturating_sub(2) as usize);
     let chat = render_chat(app, top[1].width, top[1].height);
     let input = render_input(app);
 
     frame.render_widget(config, left[0]);
-    frame.render_widget(tree, left[1]);
+    frame.render_widget(conversations, left[1]);
+    frame.render_widget(tree, left[2]);
     frame.render_widget(chat, top[1]);
     frame.render_widget(input, vertical[1]);
 }
@@ -46,7 +52,6 @@ fn render_config(app: &App) -> Paragraph<'static> {
     let lines = vec![
         Line::from(Span::styled("XD coder", Style::default().fg(Color::Cyan))),
         Line::from(format!("Model: {}", app.config.model_name)),
-        Line::from(format!("Base: {}", app.config.base_url)),
         Line::from(vec![
             Span::raw("Status: "),
             Span::styled(app.status.label(), Style::default().fg(status_color)),
@@ -60,7 +65,8 @@ fn render_config(app: &App) -> Paragraph<'static> {
             }
         )),
         Line::from("Tab focus | Enter select/send"),
-        Line::from("/clear | Esc quit"),
+        Line::from("/new /workspace"),
+        Line::from("/clear /delet /use")
     ];
 
     Paragraph::new(lines).block(
@@ -69,6 +75,27 @@ fn render_config(app: &App) -> Paragraph<'static> {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     )
+}
+
+fn render_conversations(app: &App, height: usize) -> Paragraph<'static> {
+    let scroll = if app.selected_conversation_index >= height && height > 0 {
+        (app.selected_conversation_index - height + 1) as u16
+    } else {
+        0
+    };
+
+    Paragraph::new(conversation_lines(app))
+        .scroll((scroll, 0))
+        .block(
+            Block::default()
+                .title("Conversations")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if app.focus == Focus::Conversations {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                })),
+        )
 }
 
 fn render_tree(app: &App, height: usize) -> Paragraph<'static> {
@@ -152,6 +179,56 @@ fn render_input(app: &App) -> Paragraph<'_> {
                 Color::Cyan
             })),
     )
+}
+
+fn conversation_lines(app: &App) -> Vec<Line<'static>> {
+    if app.conversations.is_empty() {
+        return vec![Line::from("No conversations")];
+    }
+
+    app.conversations
+        .iter()
+        .enumerate()
+        .map(|(index, conversation)| conversation_line(app, index, conversation))
+        .collect()
+}
+
+fn conversation_line(app: &App, index: usize, conversation: &ConversationInfo) -> Line<'static> {
+    let cursor = if index == app.selected_conversation_index {
+        Span::styled(
+            ">",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw(" ")
+    };
+    let active = if conversation.id == app.conversation_id {
+        Span::styled("●", Style::default().fg(Color::Green))
+    } else {
+        Span::raw(" ")
+    };
+    let mode_color = if conversation.workspace_path.is_some() {
+        Color::Magenta
+    } else {
+        Color::Blue
+    };
+    let mode = if conversation.workspace_path.is_some() {
+        "W"
+    } else {
+        conversation.mode.chars().next().map_or("G", |_| "G")
+    };
+    let title = conversation.title.chars().take(14).collect::<String>();
+
+    Line::from(vec![
+        cursor,
+        Span::raw(" "),
+        active,
+        Span::raw(" "),
+        Span::styled(format!("[{mode}] "), Style::default().fg(mode_color)),
+        Span::styled(title, Style::default().fg(Color::Gray)),
+    ])
 }
 
 fn tree_lines(app: &App) -> Vec<Line<'static>> {

@@ -11,7 +11,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
-use crate::api::{load_config, spawn_load_history};
+use crate::api::{load_config, spawn_load_conversations, spawn_load_history};
 use crate::app::App;
 use crate::types::{AppEvent, Config};
 
@@ -33,6 +33,7 @@ async fn run(mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
     });
     let mut app = App::new(config);
 
+    spawn_load_conversations(tx.clone());
     spawn_load_history(app.conversation_id.clone(), tx.clone());
 
     loop {

@@ -4,11 +4,12 @@ use crossterm::event::{KeyCode, KeyEvent};
 use tokio::sync::mpsc;
 
 use crate::api::{
-    spawn_chat_stream, spawn_clear_history, spawn_create_conversation, spawn_load_history,
-    spawn_switch_branch,
+    spawn_chat_stream, spawn_clear_history, spawn_create_conversation, spawn_load_conversations,
+    spawn_load_history, spawn_switch_branch,spawn_delete_conversation
 };
 use crate::types::{
-    AppEvent, AppStatus, Config, DEFAULT_CONVERSATION, Focus, Message, MessageNode, Role,
+    AppEvent, AppStatus, Config, ConversationInfo, DEFAULT_CONVERSATION, Focus, Message,
+    MessageNode, Role,
 };
 
 pub(crate) struct App {
@@ -19,6 +20,8 @@ pub(crate) struct App {
     pub(crate) config: Config,
     pub(crate) conversation_id: String,
     pub(crate) conversation_title: String,
+    pub(crate) conversations: Vec<ConversationInfo>,
+    pub(crate) selected_conversation_index: usize,
     pub(crate) tree_nodes: Vec<MessageNode>,
     pub(crate) selected_tree_index: usize,
     pub(crate) active_leaf_id: Option<String>,
@@ -35,6 +38,8 @@ impl App {
             config,
             conversation_id: DEFAULT_CONVERSATION.to_string(),
             conversation_title: "Default".to_string(),
+            conversations: Vec::new(),
+            selected_conversation_index: 0,
             tree_nodes: Vec::new(),
             selected_tree_index: 0,
             active_leaf_id: None,
@@ -51,6 +56,27 @@ impl App {
         match key.code {
             KeyCode::Esc => return false,
             KeyCode::Tab => self.focus = self.focus.next(),
+
+            KeyCode::Up if self.focus == Focus::Conversations => {
+                self.selected_conversation_index =
+                    self.selected_conversation_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.focus == Focus::Conversations => {
+                if !self.conversations.is_empty() {
+                    self.selected_conversation_index =
+                        (self.selected_conversation_index + 1).min(self.conversations.len() - 1);
+                }
+            }
+            KeyCode::Enter if self.focus == Focus::Conversations => {
+                if !self.status.can_interact() {
+                    return true;
+                }
+                if let Some(conversation) = self.conversations.get(self.selected_conversation_index)
+                {
+                    self.status = AppStatus::Loading;
+                    spawn_load_history(conversation.id.clone(), tx.clone());
+                }
+            }
 
             KeyCode::Up if self.focus == Focus::Tree => {
                 self.selected_tree_index = self.selected_tree_index.saturating_sub(1);
@@ -144,7 +170,6 @@ impl App {
 
         if let Some(title) = input.strip_prefix("/new ") {
             let title = title.trim();
-            
 
             if title.is_empty() {
                 return;
@@ -153,6 +178,38 @@ impl App {
             self.status = AppStatus::Loading;
 
             spawn_create_conversation(title.to_string(), None, tx.clone());
+
+            return;
+        }
+
+        if let Some(conversation_id) = input.strip_prefix("/use ") {
+            let conversation_id = conversation_id.trim();
+
+            if conversation_id.is_empty() {
+                return;
+            }
+
+            self.status = AppStatus::Loading;
+            self.focus = Focus::Input;
+            spawn_load_history(conversation_id.to_string(), tx.clone());
+
+            return;
+        }
+        if input == "/delete" {
+            let Some(conversation) = self.conversations.get(self.selected_conversation_index) else {
+                return;
+            };
+
+            if conversation.id == DEFAULT_CONVERSATION {
+                self.messages.push(Message {
+                    role: Role::Assistant,
+                    message: "Default conversation cannot be deleted.".to_string(),
+                });
+                return;
+            }
+
+            self.status = AppStatus::Loading;
+            spawn_delete_conversation(conversation.id.clone(), tx.clone());
 
             return;
         }
@@ -177,6 +234,14 @@ impl App {
 
     pub(crate) fn handle_event(&mut self, event: AppEvent, tx: &mpsc::UnboundedSender<AppEvent>) {
         match event {
+            AppEvent::ConversationsLoaded(conversations) => {
+                self.conversations = conversations;
+                self.selected_conversation_index = self
+                    .conversations
+                    .iter()
+                    .position(|conversation| conversation.id == self.conversation_id)
+                    .unwrap_or(0);
+            }
             AppEvent::HistoryLoaded { tree, path } => {
                 self.conversation_id = tree.conversation.id;
                 self.conversation_title = tree.conversation.title;
@@ -192,6 +257,7 @@ impl App {
                 self.messages = path.messages.into_iter().map(node_to_message).collect();
                 self.chat_scroll = u16::MAX;
                 self.status = AppStatus::Ready;
+                spawn_load_conversations(tx.clone());
             }
             AppEvent::BranchSwitched(response) => {
                 self.active_leaf_id = response.active_leaf_id;
@@ -213,6 +279,7 @@ impl App {
 
                 // 加载刚创建会话的空历史和树结构。
                 spawn_load_history(self.conversation_id.clone(), tx.clone());
+                spawn_load_conversations(tx.clone());
             }
             AppEvent::HistoryCleared => {
                 self.messages.clear();
@@ -247,7 +314,22 @@ impl App {
                         message: format!("Error: {error}"),
                     });
                 }
-            }
+            },
+            AppEvent::ConversationDeleted => {
+            self.conversation_id = DEFAULT_CONVERSATION.to_string();
+            self.conversation_title = "Default".to_string();
+
+            self.messages.clear();
+            self.tree_nodes.clear();
+            self.selected_tree_index = 0;
+            self.active_leaf_id = None;
+            self.chat_scroll = 0;
+            self.status = AppStatus::Loading;
+            self.focus = Focus::Conversations;
+
+            spawn_load_conversations(tx.clone());
+            spawn_load_history(self.conversation_id.clone(), tx.clone());
+        }
         }
     }
 

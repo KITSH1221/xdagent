@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 
 use crate::types::{
     API_BASE, AppEvent, ChatRequest, Config, ConfigStatusResponse, ConversationInfo,
-    ConversationPathResponse, ConversationTreeResponse, CreateConversationRequest,
-    SwitchLeafRequest, SwitchLeafResponse,
+    ConversationListResponse, ConversationPathResponse, ConversationTreeResponse,
+    CreateConversationRequest, SwitchLeafRequest, SwitchLeafResponse,
 };
 
 pub(crate) async fn load_config() -> color_eyre::Result<Config> {
@@ -23,6 +23,33 @@ pub(crate) async fn load_config() -> color_eyre::Result<Config> {
         base_url: response.base_url.unwrap_or_else(|| "unknown".to_string()),
         api_key_exist: response.api_key_exist,
     })
+}
+
+pub(crate) fn spawn_load_conversations(tx: mpsc::UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let result = reqwest::Client::new()
+            .get(format!("{API_BASE}/conversations"))
+            .send()
+            .await
+            .and_then(|response| response.error_for_status());
+
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                return;
+            }
+        };
+
+        match response.json::<ConversationListResponse>().await {
+            Ok(response) => {
+                let _ = tx.send(AppEvent::ConversationsLoaded(response.conversations));
+            }
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+            }
+        }
+    });
 }
 
 pub(crate) fn spawn_load_history(conversation_id: String, tx: mpsc::UnboundedSender<AppEvent>) {
@@ -208,6 +235,32 @@ pub(crate) fn spawn_create_conversation(
             Ok(conversation) => {
                 let _ = tx.send(AppEvent::ConversationCreated(conversation));
             }
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+            }
+        }
+    });
+}
+
+pub(crate) fn spawn_delete_conversation(
+    conversation_id: String,
+    tx: mpsc::UnboundedSender<AppEvent>,
+) {
+    tokio::spawn(async move {
+        let response = reqwest::Client::new()
+            .delete(format!("{API_BASE}/conversations/{conversation_id}"))
+            .send()
+            .await;
+
+        match response {
+            Ok(response) => match response.error_for_status() {
+                Ok(_) => {
+                    let _ = tx.send(AppEvent::ConversationDeleted);
+                }
+                Err(error) => {
+                    let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                }
+            },
             Err(error) => {
                 let _ = tx.send(AppEvent::AssistantError(error.to_string()));
             }

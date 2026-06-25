@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.history import (
     create_conversation,
+    delete_conversation,
     get_conversation,
     get_message_path,
     get_message_tree,
@@ -108,4 +109,27 @@ def conversation_switch_leaf(
         "conversation_id": conversation_id,
         "active_leaf_id": request.message_id,
         "messages": messages,
+    }
+
+@router.delete("/{conversation_id}")
+def conversation_delete(conversation_id: str):
+    try:
+        delete_conversation(conversation_id)
+    except ValueError as exc:
+        message = str(exc)
+
+        if "default conversation cannot be deleted" in message:
+            raise HTTPException(
+                status_code=400,
+                detail=message,
+            ) from exc
+
+        raise HTTPException(
+            status_code=404,
+            detail=message,
+        ) from exc
+
+    return {
+        "message": "conversation deleted",
+        "conversation_id": conversation_id,
     }
