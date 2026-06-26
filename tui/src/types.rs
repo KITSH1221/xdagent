@@ -1,5 +1,4 @@
 //! Shared application and API data types.
-
 use serde::{Deserialize, Serialize};
 
 pub(crate) const API_BASE: &str = "http://127.0.0.1:8000";
@@ -73,9 +72,9 @@ pub(crate) struct ConfigStatusResponse {
     pub(crate) model: Option<String>,
     pub(crate) base_url: Option<String>,
 }
-#[warn(dead_code)]
 pub(crate) struct Config {
     pub(crate) model_name: String,
+    #[allow(unused)]
     pub(crate) base_url: String,
     pub(crate) api_key_exist: bool,
 }
@@ -95,6 +94,7 @@ pub(crate) struct Message {
 pub(crate) enum AppStatus {
     Ready,
     Loading,
+    Thinking,
     Streaming,
     SwitchingBranch,
     Error,
@@ -105,6 +105,7 @@ impl AppStatus {
         match self {
             Self::Ready => "ready",
             Self::Loading => "loading",
+            Self::Thinking => "thinking",
             Self::Streaming => "streaming",
             Self::SwitchingBranch => "switching",
             Self::Error => "error",
@@ -149,4 +150,13 @@ pub(crate) enum AppEvent {
     AssistantError(String),
     // 创建 workspace/general 会话成功后携带会话信息。
     ConversationCreated(ConversationInfo),
+
+    ApprovalCompleted(String),
+    ApprovalDenied(String),
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ApprovalResponse {
+    pub(crate) approval_id: String,
+    pub(crate) tool: String,
 }

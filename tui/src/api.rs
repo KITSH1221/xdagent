@@ -1,11 +1,10 @@
 //! Asynchronous HTTP tasks. Results are sent back through `AppEvent`.
 
-use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::types::{
-    API_BASE, AppEvent, ChatRequest, Config, ConfigStatusResponse, ConversationInfo,
-    ConversationListResponse, ConversationPathResponse, ConversationTreeResponse,
+    API_BASE, AppEvent, ApprovalResponse, ChatRequest, Config, ConfigStatusResponse,
+    ConversationInfo, ConversationListResponse, ConversationPathResponse, ConversationTreeResponse,
     CreateConversationRequest, SwitchLeafRequest, SwitchLeafResponse,
 };
 
@@ -181,29 +180,17 @@ pub(crate) fn spawn_chat_stream(
             }
         };
 
-        let mut stream = response.bytes_stream();
-        let mut pending = Vec::new();
-
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => {
-                    pending.extend_from_slice(&chunk);
-                    if let Ok(text) = String::from_utf8(pending.clone()) {
-                        let _ = tx.send(AppEvent::AssistantChunk(text));
-                        pending.clear();
-                    }
-                }
-                Err(error) => {
-                    let _ = tx.send(AppEvent::AssistantError(error.to_string()));
-                    return;
-                }
+        let text = match response.text().await {
+            Ok(text) => text,
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                return;
             }
-        }
+        };
 
-        if !pending.is_empty() {
-            let _ = tx.send(AppEvent::AssistantChunk(
-                String::from_utf8_lossy(&pending).to_string(),
-            ));
+        for chunk in split_text_for_fake_stream(&text, 4) {
+            let _ = tx.send(AppEvent::AssistantChunk(chunk));
+            tokio::time::sleep(std::time::Duration::from_millis(12)).await;
         }
 
         let _ = tx.send(AppEvent::AssistantDone);
@@ -242,6 +229,26 @@ pub(crate) fn spawn_create_conversation(
     });
 }
 
+fn split_text_for_fake_stream(text: &str, chunk_size: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for ch in text.chars() {
+        current.push(ch);
+
+        if current.chars().count() >= chunk_size {
+            chunks.push(current);
+            current = String::new();
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    chunks
+}
+
 pub(crate) fn spawn_delete_conversation(
     conversation_id: String,
     tx: mpsc::UnboundedSender<AppEvent>,
@@ -261,6 +268,76 @@ pub(crate) fn spawn_delete_conversation(
                     let _ = tx.send(AppEvent::AssistantError(error.to_string()));
                 }
             },
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+            }
+        }
+    });
+}
+
+pub(crate) fn spawn_approve(approval_id: String, tx: mpsc::UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let response = reqwest::Client::new()
+            .post(format!("{API_BASE}/approvals/{approval_id}/approve"))
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(response) => match response.error_for_status() {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                return;
+            }
+        };
+
+        match response.json::<ApprovalResponse>().await {
+            Ok(response) => {
+                let _ = tx.send(AppEvent::ApprovalCompleted(format!(
+                    "Approved and executed `{}`. approval_id: {}",
+                    response.tool, response.approval_id
+                )));
+            }
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+            }
+        }
+    });
+}
+
+pub(crate) fn spawn_deny(approval_id: String, tx: mpsc::UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let response = reqwest::Client::new()
+            .post(format!("{API_BASE}/approvals/{approval_id}/deny"))
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(response) => match response.error_for_status() {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = tx.send(AppEvent::AssistantError(error.to_string()));
+                return;
+            }
+        };
+
+        match response.json::<ApprovalResponse>().await {
+            Ok(response) => {
+                let _ = tx.send(AppEvent::ApprovalDenied(format!(
+                    "Denied `{}`. approval_id: {}",
+                    response.tool, response.approval_id
+                )));
+            }
             Err(error) => {
                 let _ = tx.send(AppEvent::AssistantError(error.to_string()));
             }

@@ -4,8 +4,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 use tokio::sync::mpsc;
 
 use crate::api::{
-    spawn_chat_stream, spawn_clear_history, spawn_create_conversation, spawn_load_conversations,
-    spawn_load_history, spawn_switch_branch,spawn_delete_conversation
+    spawn_approve, spawn_chat_stream, spawn_clear_history, spawn_create_conversation,
+    spawn_delete_conversation, spawn_deny, spawn_load_conversations, spawn_load_history,
+    spawn_switch_branch,
 };
 use crate::types::{
     AppEvent, AppStatus, Config, ConversationInfo, DEFAULT_CONVERSATION, Focus, Message,
@@ -26,6 +27,7 @@ pub(crate) struct App {
     pub(crate) selected_tree_index: usize,
     pub(crate) active_leaf_id: Option<String>,
     pub(crate) focus: Focus,
+    pub(crate) pending_approval_id: Option<String>,
 }
 
 impl App {
@@ -44,6 +46,7 @@ impl App {
             selected_tree_index: 0,
             active_leaf_id: None,
             focus: Focus::Input,
+            pending_approval_id: None,
         }
     }
 
@@ -196,7 +199,8 @@ impl App {
             return;
         }
         if input == "/delete" {
-            let Some(conversation) = self.conversations.get(self.selected_conversation_index) else {
+            let Some(conversation) = self.conversations.get(self.selected_conversation_index)
+            else {
                 return;
             };
 
@@ -210,6 +214,35 @@ impl App {
 
             self.status = AppStatus::Loading;
             spawn_delete_conversation(conversation.id.clone(), tx.clone());
+
+            return;
+        }
+        if input == "/approve" {
+            let Some(approval_id) = self.pending_approval_id.clone() else {
+                self.messages.push(Message {
+                    role: Role::Assistant,
+                    message: "No pending approval.".to_string(),
+                });
+                return;
+            };
+
+            self.status = AppStatus::Loading;
+            spawn_approve(approval_id, tx.clone());
+
+            return;
+        }
+
+        if input == "/deny" {
+            let Some(approval_id) = self.pending_approval_id.clone() else {
+                self.messages.push(Message {
+                    role: Role::Assistant,
+                    message: "No pending approval.".to_string(),
+                });
+                return;
+            };
+
+            self.status = AppStatus::Loading;
+            spawn_deny(approval_id, tx.clone());
 
             return;
         }
@@ -228,7 +261,7 @@ impl App {
             message: String::new(),
         });
         self.chat_scroll = u16::MAX;
-        self.status = AppStatus::Streaming;
+        self.status = AppStatus::Thinking;
         spawn_chat_stream(input, self.conversation_id.clone(), tx.clone());
     }
 
@@ -291,6 +324,9 @@ impl App {
                 self.focus = Focus::Input;
             }
             AppEvent::AssistantChunk(text) => {
+                if self.status == AppStatus::Thinking {
+                    self.status = AppStatus::Streaming;
+                }
                 if let Some(last) = self.messages.last_mut()
                     && matches!(last.role, Role::Assistant)
                 {
@@ -299,6 +335,11 @@ impl App {
                 self.chat_scroll = u16::MAX;
             }
             AppEvent::AssistantDone => {
+                self.pending_approval_id = self
+                    .messages
+                    .last()
+                    .and_then(|message| extract_approval_id(&message.message));
+
                 self.status = AppStatus::Loading;
                 spawn_load_history(self.conversation_id.clone(), tx.clone());
             }
@@ -314,22 +355,43 @@ impl App {
                         message: format!("Error: {error}"),
                     });
                 }
-            },
+            }
             AppEvent::ConversationDeleted => {
-            self.conversation_id = DEFAULT_CONVERSATION.to_string();
-            self.conversation_title = "Default".to_string();
+                self.conversation_id = DEFAULT_CONVERSATION.to_string();
+                self.conversation_title = "Default".to_string();
 
-            self.messages.clear();
-            self.tree_nodes.clear();
-            self.selected_tree_index = 0;
-            self.active_leaf_id = None;
-            self.chat_scroll = 0;
-            self.status = AppStatus::Loading;
-            self.focus = Focus::Conversations;
+                self.messages.clear();
+                self.tree_nodes.clear();
+                self.selected_tree_index = 0;
+                self.active_leaf_id = None;
+                self.chat_scroll = 0;
+                self.status = AppStatus::Loading;
+                self.focus = Focus::Conversations;
 
-            spawn_load_conversations(tx.clone());
-            spawn_load_history(self.conversation_id.clone(), tx.clone());
-        }
+                spawn_load_conversations(tx.clone());
+                spawn_load_history(self.conversation_id.clone(), tx.clone());
+            }
+            AppEvent::ApprovalCompleted(message) => {
+                self.pending_approval_id = None;
+                self.messages.push(Message {
+                    role: Role::Assistant,
+                    message,
+                });
+
+                self.status = AppStatus::Loading;
+                spawn_load_history(self.conversation_id.clone(), tx.clone());
+            }
+
+            AppEvent::ApprovalDenied(message) => {
+                self.pending_approval_id = None;
+                self.messages.push(Message {
+                    role: Role::Assistant,
+                    message,
+                });
+
+                self.status = AppStatus::Loading;
+                spawn_load_history(self.conversation_id.clone(), tx.clone());
+            }
         }
     }
 
@@ -388,4 +450,9 @@ pub(crate) fn normalized_lines(text: &str) -> Vec<&str> {
         lines.pop();
     }
     lines
+}
+fn extract_approval_id(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("approval_id: "))
+        .map(|id| id.trim().to_string())
 }

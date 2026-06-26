@@ -11,6 +11,7 @@ from app.agent.context import build_agent_context
 from app.history import add_message, pop_last_user_message,get_conversation
 from app.tools.registry import dispatch_tool, get_tool_schemas
 from app.workspace import bind_workspace
+from app.approvals import create_approval
 
 MAX_AGENT_STEPS=8
 MAX_RESULT_LENGTH=50_000
@@ -117,6 +118,24 @@ def run_agent(user_message:str,conversation_id:str="default")->str:
                             tool_name,
                             arguments,
                         )
+                        if tool_result.get("requires_approval"):
+                            approval = create_approval(
+                                conversation_id=conversation_id,
+                                workspace_path=workspace_path,
+                                tool=tool_name,
+                                arguments=arguments,
+                            )
+
+                            final_answer = (
+                                "This operation requires approval.\n\n"
+                                f"approval_id: {approval.id}\n"
+                                f"tool: {tool_name}\n"
+                                f"arguments: {json.dumps(arguments, ensure_ascii=False)}\n\n"
+                                "Type /approve to execute it, or /deny to cancel."
+                            )
+
+                            add_message("assistant", final_answer, conversation_id)
+                            return final_answer
 
                     messages.append(
                         {

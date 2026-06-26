@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from app.history import init_db
 from app.routes import chat, config, conversation, files
-
+from app.routes import approval
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -21,3 +21,4 @@ app.include_router(files.router)
 app.include_router(config.router)
 app.include_router(conversation.router)
 app.include_router(chat.router)
+app.include_router(approval.router)
